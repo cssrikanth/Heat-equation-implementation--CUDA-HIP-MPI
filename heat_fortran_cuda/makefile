@@ -1,7 +1,7 @@
 main:
-	pgf90 -Mcuda=cuda10.1 heat.cuf -o heat
+	pgf90 -Mcuda=cuda10.1 heat_old.cuf -o heat
 managed:
-	pgf90 -Mcuda=cuda10.1 heat_managed.cuf -o heat
+	pgf90 -Mcuda=cuda10.1 heat.cuf -o heat
 init:
 	python3 init.py
 out:

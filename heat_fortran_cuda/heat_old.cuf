@@ -13,8 +13,8 @@ module run
 	contains
 
 	subroutine host(T, ntime, r, n)
-		real(dp), device, allocatable, dimension(:,:) :: T_old_d
-		real(dp), managed, dimension(:,:) :: T
+		real(dp), device, allocatable, dimension(:,:) :: T_d, T_old_d
+		real(dp), dimension(:,:) :: T
 		type(dim3) :: grid , tBlock
 		integer :: i
 		real(dp), value :: r
@@ -23,13 +23,16 @@ module run
 		tBlock = dim3 (32,8,1)
 	        grid = dim3(ceiling(real(n)/ tBlock%x), ceiling(real(n)/ tBlock%y), 1)
 	
+	        allocate(T_d(n,n))
 	        allocate(T_old_d(n,n))
 	
+		T_d = T
 		do i=1,ntime
 		print*,"time_it:", i
-			T_old_d = T
-			call heat_equation <<<grid ,tBlock >>>(T, T_old_d, r, n)
+			T_old_d = T_d
+			call heat_equation <<<grid ,tBlock >>>(T_d, T_old_d, r, n)
 	        end do
+		T = T_d
 
         end subroutine 
 
@@ -60,8 +63,7 @@ program heat
         implicit none
 
 	integer :: n
-	real(dp), managed, allocatable, dimension(:,:) :: T
-	real(dp), allocatable, dimension(:,:) :: x, y
+	real(dp), allocatable, dimension(:,:) :: T, x, y
         real(dp) :: dom_len, delta, dt, nu, r, sigma
         integer ::  i, j, k, ntime,z
 	real(dp) :: start, finish
