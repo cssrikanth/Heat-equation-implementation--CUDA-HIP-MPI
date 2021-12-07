@@ -83,9 +83,9 @@ call cpu_time(start)
         allocate(y(n,n))
 
         x(1,:) = 0.0
-        x(n,:) = 2.0
+        x(n,:) = dom_len
         y(:,1) = 0.0
-        y(:,n) = 2.0
+        y(:,n) = dom_len
 
         do i=2,n-1
              x(i,:) = x(i-1,:) + delta
