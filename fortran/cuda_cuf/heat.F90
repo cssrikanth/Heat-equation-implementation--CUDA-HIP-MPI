@@ -28,11 +28,11 @@ module mod_heat
    do i=1,ntime
     print*,"time_it:", i
     T_old_d = T_d
-    !$cuf kernel do(2) <<<*,*>>>
+    !$cuf kernel do(2) <<<grid,tBlock>>>
     do j=1,n
      do k=1,n
       if(j .ne. 1 .and. k .ne. 1 .and. j .ne. n .and. k .ne. n) then
-       T_d(i,j) = T_old_d(i,j) + r*(T_old_d(i+1,j)+T_old_d(i,j+1)+T_old_d(i-1,j)+T_old_d(i,j-1)-4*T_old_d(i,j))
+       T_d(j,k) = T_old_d(j,k) + r*(T_old_d(j+1,k)+T_old_d(j,k+1)+T_old_d(j-1,k)+T_old_d(j,k-1)-4*T_old_d(j,k))
       end if
      end do
     end do 

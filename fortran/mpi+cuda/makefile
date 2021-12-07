@@ -5,4 +5,4 @@ init:
 out:
 	python3 out.py
 clean:
-	rm heat int.dat soln.dat *.mod
+	rm heat int.dat soln.dat *.mod *.eps

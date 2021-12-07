@@ -11,15 +11,19 @@ module run
  integer, parameter :: dp = doubtype
  integer, parameter :: mpi_prec = mpi_real8
 
- real(dp), allocatable, dimension(:,:) :: T_d, T_old_d
- real(dp), allocatable, dimension(:,:) :: T, x, y
+ real(dp), allocatable, dimension(:,:) :: T_d,T_old_d
+ real(dp), allocatable, dimension(:,:) :: T
+ real(dp), allocatable, dimension(:,:) :: t_1s,t_2s,t_1r,t_2r
+ real(dp), allocatable, dimension(:,:) :: t_3s,t_4s,t_3r,t_4r
+ real(dp), allocatable, dimension(:)   :: x,y
+ real(dp), allocatable, dimension(:)   :: xg,yg
  
  integer    :: n, ntime
  real(dp)   :: dom_len, delta, dt, nu, r, sigma
  integer    :: iercuda
 
  !MPI
- integer, parameter :: ndims = 3
+ integer, parameter :: ndims = 2
  integer, dimension(:), allocatable  :: nblocks
  logical, dimension(:), allocatable  :: pbc
  integer, dimension(mpi_status_size) :: istatus
@@ -28,132 +32,310 @@ module run
  integer :: mp_cart,mp_cartx,mp_carty,mp_cartz
  integer :: nrank,nproc,nrank_x, nrank_y, nrank_z
  integer :: ileftx,irightx,ilefty,irighty,ileftz,irightz
- integer :: iermpi, iercuda
+ integer :: iermpi
+
+ integer :: nx
+ integer :: ny
+ integer :: nz
+ integer, parameter :: ng=1   ! Number of ghost nodes
+ logical :: masterproc
 
 #ifdef USE_CUDA
  attributes(device) :: T_d, T_old_d
 #endif
 
-
 end module
 
-module mod_mpi
+module mod_setup
  contains
-  subroutine start_mpi()
+  subroutine setup()
    use run
    implicit none
+
+   integer :: dims(2),i,j,k,ii,jj
+   logical :: reord,remain_dims(ndims)
    
    call mpi_init(iermpi)
    call mpi_comm_rank(mpi_comm_world,nrank,iermpi)
    call mpi_comm_size(mpi_comm_world,nproc,iermpi)
 
+   allocate(ncoords(ndims))
+   allocate(nblocks(ndims))
+   allocate(pbc(ndims))
+
+   pbc(1) = .false.
+   pbc(2) = .false.
+
+   masterproc = .false.
+   if (nrank==0) masterproc = .true.
+
+   open(unit=11,file='input.dat',form='formatted')
+
+   read (11,*) n, sigma, nu, dom_len, ntime
+
+   close(11)
+
+   dims = [0,0]
+   call MPI_Dims_create(nproc, 2, dims, iermpi)
+   nblocks(1) = 1
+   nblocks(2) = 2
+   if (masterproc) write(*,*)'Automatic MPI decomposition:', nblocks(1),' x ', nblocks(2)
+
+   nx = n/nblocks(1)
+   ny = n/nblocks(2)
+
+   reord = .false.
+
+   call mpi_cart_create(mpi_comm_world,ndims,nblocks,pbc,reord,mp_cart,iermpi)
+   call mpi_cart_coords(mp_cart,nrank,ndims,ncoords,iermpi)
+
+   remain_dims(1) = .true.
+   remain_dims(2) = .false.
+   call mpi_cart_sub(mp_cart,remain_dims,mp_cartx,iermpi)
+   call mpi_comm_rank(mp_cartx,nrank_x,iermpi)
+   call mpi_cart_shift(mp_cartx,0,1,ileftx,irightx,iermpi)
+   remain_dims(2) = .true.
+   remain_dims(1) = .false.
+   call mpi_cart_sub(mp_cart,remain_dims,mp_carty,iermpi)
+   call mpi_comm_rank(mp_carty,nrank_y,iermpi)
+   call mpi_cart_shift(mp_carty,0,1,ilefty,irighty,iermpi)
+
+! Allocate variables
+ 
+   allocate(T(1-ng:nx+ng,1-ng:ny+ng))
+   allocate(x(1-ng:nx+ng))
+   allocate(y(1-ng:ny+ng))
+   allocate(T_d(1-ng:nx+ng,1-ng:ny+ng))
+   allocate(T_old_d(1-ng:nx+ng,1-ng:ny+ng))
+   
+   !allocate(t_1s(ng,ny))
+   !allocate(t_2s(ng,ny))
+   !allocate(t_1r(ng,ny))
+   !allocate(t_2r(ng,ny))
+   !allocate(t_3s(nx,ng))
+   !allocate(t_4s(nx,ng))
+   !allocate(t_3r(nx,ng))
+   !allocate(t_4r(nx,ng))
+   
+   allocate(xg(1-ng:n+ng))
+   allocate(yg(1-ng:n+ng))
+
+   x = 0.0_dp
+   y = 0.0_dp
+   xg = 0.0_dp
+   !t_1s = 0.0_dp
+   !t_2s = 0.0_dp
+   !t_3s = 0.0_dp
+   !t_4s = 0.0_dp
+   !t_1r = 0.0_dp
+   !t_2r = 0.0_dp
+   !t_3r = 0.0_dp
+   !t_4r = 0.0_dp
+
+   delta = dom_len/real(n-1)
+
+   dt = (sigma * delta**2)/nu
+
+   do i=1-ng,n+ng
+    xg(i) = (i-1)*delta
+   enddo
+   do j=1-ng,n+ng
+    yg(j) = (j-1)*delta
+   enddo
+
+   ii = nx*ncoords(1)
+   do i=1-ng,nx+ng
+    x(i) = xg(ii+i)
+   enddo
+   !
+   jj = ny*ncoords(2)
+   do j=1-ng,ny+ng
+    y(j) = yg(jj+j)
+   enddo
+
   end subroutine
 end module
 
+module mod_swap
+ contains
+  subroutine swap()
+   use run
+   implicit none
+   integer :: i,j
+   integer :: indx,indy
 
+   indx = ng*ny
+   indy = nx*ng
+
+   !$cuf kernel do(2) <<<*,*>>>
+   do j=1,ny
+    do i=1,ng
+      t_1s(i,j) = T_d(i,j)
+      t_2s(i,j) = T_d(nx-ng+i,j)
+    end do
+   end do
+   !@cuf iercuda=cudaDeviceSynchronize()
+   !$cuf kernel do(2) <<<*,*>>>
+   do i=1,nx
+    do j=1,ng
+      t_3s(i,j) = T_d(i,ny-ng+j)
+      t_4s(i,j) = T_d(i,j)
+    end do
+   end do
+   !@cuf iercuda=cudaDeviceSynchronize()
+
+   call mpi_sendrecv(t_1s,indx,mpi_prec,ileftx ,1,t_2r,indx,mpi_prec,irightx,1,mp_cartx,istatus,iermpi)
+   call mpi_sendrecv(t_2s,indx,mpi_prec,irightx,2,t_1r,indx,mpi_prec,ileftx ,2,mp_cartx,istatus,iermpi)
+   call mpi_sendrecv(t_3s,indy,mpi_prec,ilefty ,3,t_4r,indy,mpi_prec,irighty,3,mp_carty,istatus,iermpi)
+   call mpi_sendrecv(t_4s,indy,mpi_prec,irighty,4,t_3r,indy,mpi_prec,ilefty ,4,mp_carty,istatus,iermpi)   
+  
+   if (ileftx/=mpi_proc_null) then 
+    !$cuf kernel do(2) <<<*,*>>>
+    do j=1,ny
+     do i=1,ng
+      T_d(i-ng,j) = t_1r(i,j)
+     end do
+    end do
+    !@cuf iercuda=cudaDeviceSynchronize()
+   endif
+   if (irightx/=mpi_proc_null) then 
+    !$cuf kernel do(2) <<<*,*>>>
+    do j=1,ny
+     do i=1,ng
+      T_d(nx+i,j) = t_2r(i,j)
+     end do
+    end do
+    !@cuf iercuda=cudaDeviceSynchronize()
+   end if
+   
+   if (ilefty/=mpi_proc_null) then 
+    !$cuf kernel do(2) <<<*,*>>>
+    do i=1,nx
+     do j=1,ng
+      T_d(i,j-ng) = t_3r(i,j)
+     end do
+    end do
+    !@cuf iercuda=cudaDeviceSynchronize()
+   end if 
+   if (irighty/=mpi_proc_null) then 
+    !$cuf kernel do(2) <<<*,*>>>
+    do i=1,nx
+     do j=1,ng
+      T_d(i,ny+j) = t_4r(i,j)
+     end do
+    end do
+    !@cuf iercuda=cudaDeviceSynchronize()
+   end if 
+  
+  end subroutine
+
+end module
 
 module mod_heat
  contains
   subroutine heat_eqn()
    use run
+   use mod_swap
    implicit none
-   type(dim3) :: grid,tBlock
    integer    :: i,j,k
-  
-   T_d = T
+
+   ! Time loop
    do i=1,ntime
-    print*,"time_it:", i
+    if(masterproc)write(*,*)"time_it:", i
     T_old_d = T_d
     !$cuf kernel do(2) <<<*,*>>>
-    do j=1,n
-     do k=1,n
-      if(j .ne. 1 .and. k .ne. 1 .and. j .ne. n .and. k .ne. n) then
-       T_d(i,j) = T_old_d(i,j) + r*(T_old_d(i+1,j)+T_old_d(i,j+1)+T_old_d(i-1,j)+T_old_d(i,j-1)-4*T_old_d(i,j))
-      end if
+    do j=1,nx
+     do k=1,ny
+       T_d(j,k) = T_old_d(j,k) + r*(T_old_d(j+1,k)+T_old_d(j,k+1)+T_old_d(j-1,k)+T_old_d(j,k-1)-4*T_old_d(j,k))
      end do
-    end do 
+    end do
+    !@cuf iercuda=cudaDeviceSynchronize()
+
+    ! Ghost update
+    call swap() 
    end do
-   !@cuf iercuda=cudaDeviceSynchronize()
-   T = T_d
-  
+
   end subroutine 
 
 end module
 
 program heat
  use run
- use mod_heat 
+ use mod_heat
+ use mod_setup
 
  implicit none
 
  integer ::  i, j, k, z
- real(dp) :: start, finish
+ real(dp) :: start, finish,lsum,gsum
+ character(len=8) :: fmt,x1
 
- call start_mpi()
+ fmt = '(I5.5)'
 
- open(unit=11,file='input.dat',form='formatted')
+ call setup()
 
- read (11,*) n, sigma, nu, dom_len, ntime
+! Setting initial and boundary conditions
+ T = 2.0_dp
+ T_d = 2.0_dp
+ T_old_d = 2.0_dp
+ !if (ileftx==mpi_proc_null) then
+ !  T(1-ng,:) = 1.0_dp
+ !end if
+ !if (irightx==mpi_proc_null) then
+ !  T(nx+ng,:) = 1.0_dp
+ !end if
+ !if (ilefty==mpi_proc_null) then
+ !  T(:,1-ng) = 1.0_dp
+ !end if
+ !if (irighty==mpi_proc_null) then
+ !  T(:,ny+ng) = 1.0_dp
+ !end if
 
- delta =  dom_len/real(n-1)
+!! cfl 
+ !r = (nu*dt)/delta**2
 
- dt = (sigma * delta**2)/nu
+ !call MPI_BARRIER(mpi_comm_world,iermpi) 
+ !call cpu_time(start)
+!!
+ !! Host to device
+ !T_d = T
 
-! Allocate variables 
- allocate(T(n,n))
- allocate(x(n,n))
- allocate(y(n,n))
- allocate(T_d(n,n))
- allocate(T_old_d(n,n))
+ !call heat_eqn()
+!!
+ !! Back to host
+ !T = T_d
+ ! 
+ !call MPI_BARRIER(mpi_comm_world,iermpi) 
+ !call cpu_time(finish)
 
- x(1,:) = 0.0
- x(n,:) = dom_len
- y(:,1) = 0.0
- y(:,n) = dom_len
+ !lsum = 0.0_dp
+ !do i=1,nx
+ ! do j=1,ny
+ !  lsum = lsum + T(i,j)
+ ! enddo
+ !enddo
+ !call MPI_Reduce(lsum, gsum, 1, MPI_DOUBLE, MPI_SUM, 0, mpi_comm_world, iermpi) 
 
- do i=2,n-1
-  x(i,:) = x(i-1,:) + delta
-  y(:,i) = y(:,i-1) + delta
- end do
+ !if(masterproc)print*,gsum
 
-! Setting initial conditions
-
- do i=1,n
-  do j=1,n
-   if(x(i,j) <= 1.5 .and. x(i,j) >= 0.5 .and. y(i,j) <= 1.0 .and. y(i,j) >= 0.5) then
-    T(i,j) = 2.0
-   else
-    T(i,j) = 1.0
-   end if
-  end do
- end do
-
- open(unit=17,file='int.dat',form='formatted')
- do i=1,n
-  do j=1,n
-   write(17,*)x(i,j),y(i,j),T(i,j)
-  end do
- end do
+ write (x1,fmt) nrank 
+ open(unit=17,file='soln'//trim(x1)//'.dat',form='formatted')
+ do i=1,nx
+  do j=1,ny
+   write(17,*)x(i),y(j),T(i,j)
+  enddo
+ enddo
  close(17)
+         
+!
+ if(masterproc)print*,"simulation completed!!!!"
+ if(masterproc)print*,"total time:", finish - start
 
-! cfl 
- r = (nu*dt)/delta**2
- 
- call cpu_time(start)
+ !deallocate(x,y)
+ !deallocate(T,T_d,T_old_d)
+ !deallocate(xg,yg)
+ !deallocate(ncoords,nblocks,pbc)
 
- call heat_eqn()
-
- call cpu_time(finish)
- 
- open(unit=17,file='soln.dat',form='formatted')
- do i=1,n
-  do j=1,n
-   write(17,*)x(i,j),y(i,j),T(i,j)
-  end do
- end do
- close(17)
-
- print*,"simulation completed!!!!"
- print*,"total time:", finish - start
+ call mpi_finalize(iermpi)
 
 end program

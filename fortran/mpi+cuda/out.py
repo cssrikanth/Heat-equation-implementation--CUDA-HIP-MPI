@@ -3,7 +3,6 @@ from mpl_toolkits.mplot3d import Axes3D
 import re
 import numpy
 import math
-import pandas as pd
 
 file1 = open('soln.dat')
 data = file1.read()
@@ -42,4 +41,5 @@ ax.set_zlim(1, 2.5)
 
 ax.set_xlabel('$x$')
 ax.set_ylabel('$y$');
-pyplot.show()
+
+fig.savefig('sol.eps',format='eps',bbox_inches='tight',dpi=600)
