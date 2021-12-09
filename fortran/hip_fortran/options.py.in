@@ -1,0 +1,3 @@
+translator.FORTRAN_2_C_TYPE_MAP["real"]["mykind"]    = "double"
+translator.FORTRAN_TYPE_2_BYTES_MAP["real"]["mykind"]    = "8"
+
