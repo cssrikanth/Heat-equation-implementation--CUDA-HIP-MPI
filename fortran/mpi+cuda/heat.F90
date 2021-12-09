@@ -62,11 +62,11 @@ module mod_setup
    call mpi_comm_size(mpi_comm_world,nproc,iermpi)
 
 #ifdef USE_CUDA
-!   mydev=0
-!   call mpi_comm_split_type(mpi_comm_world,mpi_comm_type_shared,0,mpi_info_null,local_comm,iermpi)
-!   call mpi_comm_rank(local_comm,mydev,iermpi)
-!   iermpi = cudaSetDevice(mydev)
-!   write(*,*) "MPI rank",nrank,"using GPU",mydev
+   mydev=0
+   call mpi_comm_split_type(mpi_comm_world,mpi_comm_type_shared,0,mpi_info_null,local_comm,iermpi)
+   call mpi_comm_rank(local_comm,mydev,iermpi)
+   iermpi = cudaSetDevice(mydev)
+   write(*,*) "MPI rank",nrank,"using GPU",mydev
 #endif
 
    allocate(ncoords(ndims))
@@ -108,32 +108,32 @@ module mod_setup
    allocate(x(1-ng:nx+ng))
    allocate(y(1-ng:ny+ng))
    allocate(T_d(1-ng:nx+ng,1-ng:ny+ng))
-   !allocate(T_old_d(1-ng:nx+ng,1-ng:ny+ng))
+   allocate(T_old_d(1-ng:nx+ng,1-ng:ny+ng))
+   
+   allocate(t_1s(ng,ny))
+   allocate(t_2s(ng,ny))
+   allocate(t_1r(ng,ny))
+   allocate(t_2r(ng,ny))
    !
-   !allocate(t_1s(ng,ny))
-   !allocate(t_2s(ng,ny))
-   !allocate(t_1r(ng,ny))
-   !allocate(t_2r(ng,ny))
+   allocate(td_1s(ng,ny))
+   allocate(td_2s(ng,ny))
+   allocate(td_1r(ng,ny))
+   allocate(td_2r(ng,ny))
    !
-   !allocate(td_1s(ng,ny))
-   !allocate(td_2s(ng,ny))
-   !allocate(td_1r(ng,ny))
-   !allocate(td_2r(ng,ny))
-   !
-   !allocate(xg(1-ng:n+ng))
+   allocate(xg(1-ng:n+ng))
 
-   !delta = dom_len/real(n-1)
+   delta = dom_len/real(n-1)
 
-   !dt = (sigma * delta**2)/nu
+   dt = (sigma * delta**2)/nu
 
-   !do i=1-ng,n+ng
-   ! xg(i) = (i-1)*delta
-   !enddo
-   !ii = nx*ncoords(1)
-   !do i=1-ng,nx+ng
-   ! x(i) = xg(ii+i)
-   !enddo
-   !y = xg
+   do i=1-ng,n+ng
+    xg(i) = (i-1)*delta
+   enddo
+   ii = nx*ncoords(1)
+   do i=1-ng,nx+ng
+    x(i) = xg(ii+i)
+   enddo
+   y = xg
 
   end subroutine
 end module
@@ -234,17 +234,15 @@ program heat
  call setup()
 
 ! Setting initial and boundary conditions
- !T = 2.0_dp
- !T_d = 2.0_dp
- !T_old_d = 2.0_dp
- !if (ileftx==mpi_proc_null) then
- !  T(1-ng,:) = 1.0_dp
- !end if
- !if (irightx==mpi_proc_null) then
- !  T(nx+ng,:) = 1.0_dp
- !end if
- !T(:,1-ng) = 1.0_dp
- !T(:,ny+ng) = 1.0_dp
+ T = 2.0_dp
+ if (ileftx==mpi_proc_null) then
+   T(1-ng,:) = 1.0_dp
+ end if
+ if (irightx==mpi_proc_null) then
+   T(nx+ng,:) = 1.0_dp
+ end if
+ T(:,1-ng) = 1.0_dp
+ T(:,ny+ng) = 1.0_dp
 
 ! cfl 
  r = (nu*dt)/delta**2
@@ -253,25 +251,25 @@ program heat
  call cpu_time(start)
 !
  ! Host to device
-! T_d = T
+ T_d = T
 
- !call heat_eqn()
+ call heat_eqn()
 !
  ! Back to host
-! T = T_d
+ T = T_d
   
  call MPI_BARRIER(mpi_comm_world,iermpi) 
  call cpu_time(finish)
 
- !lsum = 0.0_dp
- !do i=1,nx
- ! do j=1,ny
- !  lsum = lsum + T(i,j)
- ! enddo
- !enddo
- !call MPI_Reduce(lsum, gsum, 1, MPI_DOUBLE, MPI_SUM, 0, mpi_comm_world, iermpi) 
+ lsum = 0.0_dp
+ do i=1,nx
+  do j=1,ny
+   lsum = lsum + T(i,j)
+  enddo
+ enddo
+ call MPI_Reduce(lsum, gsum, 1, MPI_DOUBLE, MPI_SUM, 0, mpi_comm_world, iermpi) 
 
- !if(masterproc)print*,"Sum of Temperature:",gsum
+ if(masterproc)print*,"Sum of Temperature:",gsum
 
  if (soln == 1) then
   fmt = '(I5.5)'
@@ -290,12 +288,12 @@ program heat
  if(masterproc)print*,"simulation completed!!!!"
  if(masterproc)print*,"total time:", finish - start
 
- !deallocate(x,y)
- !deallocate(T,T_d,T_old_d)
- !deallocate(t_1s,t_2s,t_1r,t_2r)
- !deallocate(td_1s,td_2s,td_1r,td_2r)
- !deallocate(xg)
- !deallocate(ncoords,nblocks,pbc)
+ deallocate(x,y)
+ deallocate(T,T_d,T_old_d)
+ deallocate(t_1s,t_2s,t_1r,t_2r)
+ deallocate(td_1s,td_2s,td_1r,td_2r)
+ deallocate(xg)
+ deallocate(ncoords,nblocks,pbc)
 
  call mpi_finalize(iermpi)
 
