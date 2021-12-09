@@ -1,8 +1,6 @@
-main:
+mpi:
 	mpif90 heat.F90 -o heat
-init:
-	python3 init.py
 out:
 	python3 out.py
 clean:
-	rm heat int.dat soln.dat *.mod *.eps
+	rm heat soln* *.mod *.eps
