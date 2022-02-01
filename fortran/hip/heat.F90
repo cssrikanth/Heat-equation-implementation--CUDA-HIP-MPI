@@ -168,62 +168,85 @@ module mod_setup
   end subroutine
 end module
 
-!module mod_swap
-! contains
-!  subroutine swap()
-!   use run
-!   implicit none
-!   integer :: i,j
-!   integer :: indx,indy
-!   type(dim3) :: grid, tBlock
-!
-!
-!   indx = ng*ny
-!
-!   tBlock = dim3(128,2,1)
-!   grid = dim3(ceiling(real(ng-(1)+1))/tBlock%x,ceiling(real(ny-(1)+1))/tBlock%y,1)
-!   !$cuf kernel do(2) <<<grid,tBlock>>>
-!   do j=1,ny
-!    do i=1,ng
-!      td_1s(i,j) = T_d(i,j)
-!      td_2s(i,j) = T_d(nx-ng+i,j)
-!    end do
-!   end do
-!   !@cuf iercuda=cudaDeviceSynchronize()
-!
-!   t_1s = td_1s
-!   t_2s = td_2s
-!   call mpi_sendrecv(t_1s,indx,mpi_prec,ileftx ,1,t_2r,indx,mpi_prec,irightx,1,mp_cartx,istatus,iermpi)
-!   call mpi_sendrecv(t_2s,indx,mpi_prec,irightx,2,t_1r,indx,mpi_prec,ileftx ,2,mp_cartx,istatus,iermpi)
-!   td_1r = t_1r
-!   td_2r = t_2r
+module mod_swap
+ contains
+  subroutine swap()
+   use run
+   use mod_heat
+   implicit none
+   integer :: i,j
+   integer :: indx,indy
+   type(dim3) :: grid, tBlock
+
+
+   indx = ng*ny
+ 
+#ifdef __GPUFORT
+    call launchs(0,c_null_ptr,c_loc(T_d),size(T_d,1),size(T_d,2),lbound(t_d,1),lbound(t_d,2),c_loc(td_1s),size(td_1s,1),size(td_1s,2),lbound(td_1s,1),lbound(td_1s,2),c_loc(td_2s),size(td_2s,1),size(td_2s,2),lbound(td_2s,1),lbound(td_2s,2),nx,ny,ng)
+#else
+   !$cuf kernel do(2) <<<grid,tBlock>>>
+   do j=1,ny
+    do i=1,ng
+      td_1s(i,j) = T_d(i,j)
+      td_2s(i,j) = T_d(nx-ng+i,j)
+    end do
+   end do
+   !@cuf iercuda=cudaDeviceSynchronize()
+#endif
+#ifdef __GPUFORT
+    call hipCheck(hipMemcpy(td_1s, t_1s, hipMemcpyDeviceToHost))
+    call hipCheck(hipMemcpy(td_2s, t_2s, hipMemcpyDeviceToHost))
+#else
+   t_1s = td_1s
+   t_2s = td_2s
+#endif
+
+   call mpi_sendrecv(t_1s,indx,mpi_prec,ileftx ,1,t_2r,indx,mpi_prec,irightx,1,mp_cartx,istatus,iermpi)
+   call mpi_sendrecv(t_2s,indx,mpi_prec,irightx,2,t_1r,indx,mpi_prec,ileftx ,2,mp_cartx,istatus,iermpi)
+
+#ifdef __GPUFORT
+    call hipCheck(hipMemcpy(t_1r, td_1r, hipMemcpyHostToDevice))
+    call hipCheck(hipMemcpy(t_2r, td_2r, hipMemcpyHostToDevice))
+#else
+   td_1r = t_1r
+   td_2r = t_2r
+#endif
 !  
-!   if (ileftx/=mpi_proc_null) then 
-!    !$cuf kernel do(2) <<<grid,tBlock>>>
-!    do j=1,ny
-!     do i=1,ng
-!      T_d(i-ng,j) = td_1r(i,j)
-!     end do
-!    end do
-!    !@cuf iercuda=cudaDeviceSynchronize()
-!   endif
-!   if (irightx/=mpi_proc_null) then 
-!    !$cuf kernel do(2) <<<grid,tBlock>>>
-!    do j=1,ny
-!     do i=1,ng
-!      T_d(nx+i,j) = td_2r(i,j)
-!     end do
-!    end do
-!    !@cuf iercuda=cudaDeviceSynchronize()
-!   end if
-!   
-!  end subroutine
-!
-!end module
+   if (ileftx/=mpi_proc_null) then 
+#ifdef __GPUFORT
+    call launchr1(0,c_null_ptr,c_loc(T_d),size(T_d,1),size(T_d,2),lbound(t_d,1),lbound(t_d,2),c_loc(td_1r),size(td_1r,1),size(td_1r,2),lbound(td_1r,1),lbound(td_1r,2),ny,ng)
+#else
+    !$cuf kernel do(2) <<<grid,tBlock>>>
+    do j=1,ny
+     do i=1,ng
+      T_d(i-ng,j) = td_1r(i,j)
+     end do
+    end do
+    !@cuf iercuda=cudaDeviceSynchronize()
+#endif
+   endif
+
+   if (irightx/=mpi_proc_null) then 
+#ifdef __GPUFORT
+    call launchr2(0,c_null_ptr,c_loc(T_d),size(T_d,1),size(T_d,2),lbound(t_d,1),lbound(t_d,2),c_loc(td_2r),size(td_2r,1),size(td_2r,2),lbound(td_2r,1),lbound(td_2r,2),nx,ny,ng)
+#else
+    !$cuf kernel do(2) <<<grid,tBlock>>>
+    do j=1,ny
+     do i=1,ng
+      T_d(nx+i,j) = td_2r(i,j)
+     end do
+    end do
+    !@cuf iercuda=cudaDeviceSynchronize()
+#endif
+   end if
+   
+  end subroutine
+
+end module
 
 module mod_heat
  interface
-  subroutine launch(shmem,stream,td1,td2,lb1,lb2,ub1,ub2,rr,nyy,nxx) bind(c)
+  subroutine launch(shmem,stream,td1,td2,n1,n2,lb1,lb2,rr,nyy,nxx) bind(c)
    use iso_c_binding
    use hipfort
    use hipfort_check
@@ -235,21 +258,107 @@ module mod_heat
    integer(c_int),value,intent(in) :: shmem
    type(c_ptr),value,intent(in) :: stream
    type(c_ptr),value :: td1
+   integer(c_int),value,intent(in) :: n1
+   integer(c_int),value,intent(in) :: n2
    integer(c_int),value,intent(in) :: lb1
    integer(c_int),value,intent(in) :: lb2
-   integer(c_int),value,intent(in) :: ub1
-   integer(c_int),value,intent(in) :: ub2
    type(c_ptr),value :: td2
 
    real(mykind),value :: rr
    integer,value :: nyy
    integer,value :: nxx
   end subroutine
+  
+  subroutine launchs(shmem,stream,td,td_n1,td_n2,td_lb1,td_lb2,tds1,tds1_n1,tds1_n2,tds1_lb1,tds1_lb2,tds2,tds2_n1,tds2_n2,tds2_lb1,tds2_lb2,nxx,nyy,ngg) bind(c)
+   use iso_c_binding
+   use hipfort
+   use hipfort_check
+   use hipfort_types
+   use run
+   
+   implicit none
+
+   integer(c_int),value,intent(in) :: shmem
+   type(c_ptr),value,intent(in) :: stream
+   type(c_ptr),value :: td
+   integer(c_int),value,intent(in) :: td_n1
+   integer(c_int),value,intent(in) :: td_n2
+   integer(c_int),value,intent(in) :: td_lb1
+   integer(c_int),value,intent(in) :: td_lb2
+   type(c_ptr),value :: tds1
+   integer(c_int),value,intent(in) :: tds1_n1
+   integer(c_int),value,intent(in) :: tds1_n2
+   integer(c_int),value,intent(in) :: tds1_lb1
+   integer(c_int),value,intent(in) :: tds1_lb2
+   type(c_ptr),value :: tds2
+   integer(c_int),value,intent(in) :: tds2_n1
+   integer(c_int),value,intent(in) :: tds2_n2
+   integer(c_int),value,intent(in) :: tds2_lb1
+   integer(c_int),value,intent(in) :: tds2_lb2
+
+   integer,value :: nxx
+   integer,value :: nyy
+   integer,value :: ngg
+  end subroutine
+  
+  subroutine launchr1(shmem,stream,td,td_n1,td_n2,td_lb1,td_lb2,tdr,tdr_n1,tdr_n2,tdr_lb1,tdr_lb2,nyy,ngg) bind(c)
+   use iso_c_binding
+   use hipfort
+   use hipfort_check
+   use hipfort_types
+   use run
+   
+   implicit none
+
+   integer(c_int),value,intent(in) :: shmem
+   type(c_ptr),value,intent(in) :: stream
+   type(c_ptr),value :: td
+   integer(c_int),value,intent(in) :: td_n1
+   integer(c_int),value,intent(in) :: td_n2
+   integer(c_int),value,intent(in) :: td_lb1
+   integer(c_int),value,intent(in) :: td_lb2
+   type(c_ptr),value :: tdr
+   integer(c_int),value,intent(in) :: tdr_n1
+   integer(c_int),value,intent(in) :: tdr_n2
+   integer(c_int),value,intent(in) :: tdr_lb1
+   integer(c_int),value,intent(in) :: tdr_lb2
+
+   integer,value :: nyy
+   integer,value :: ngg
+  end subroutine
+  
+  subroutine launchr2(shmem,stream,td,td_n1,td_n2,td_lb1,td_lb2,tdr,tdr_n1,tdr_n2,tdr_lb1,tdr_lb2,nxx,nyy,ngg) bind(c)
+   use iso_c_binding
+   use hipfort
+   use hipfort_check
+   use hipfort_types
+   use run
+   
+   implicit none
+
+   integer(c_int),value,intent(in) :: shmem
+   type(c_ptr),value,intent(in) :: stream
+   type(c_ptr),value :: td
+   integer(c_int),value,intent(in) :: td_n1
+   integer(c_int),value,intent(in) :: td_n2
+   integer(c_int),value,intent(in) :: td_lb1
+   integer(c_int),value,intent(in) :: td_lb2
+   type(c_ptr),value :: tdr
+   integer(c_int),value,intent(in) :: tdr_n1
+   integer(c_int),value,intent(in) :: tdr_n2
+   integer(c_int),value,intent(in) :: tdr_lb1
+   integer(c_int),value,intent(in) :: tdr_lb2
+
+   integer,value :: nxx
+   integer,value :: nyy
+   integer,value :: ngg
+  end subroutine
+ 
  end interface
  contains
   subroutine heat_eqn()
    use run
-!   use mod_swap
+   use mod_swap
    implicit none
    integer    :: i,j,k
    type(dim3) :: grid, tBlock
@@ -264,7 +373,7 @@ module mod_heat
 #endif
  
 #ifdef __GPUFORT
-    call launch(0,c_null_ptr,c_loc(T_d),c_loc(T_old_d),lbound(T_d,1),lbound(T_d,2),ubound(T_d,1),ubound(T_d,2),r,ny,nx)
+    call launch(0,c_null_ptr,c_loc(T_d),c_loc(T_old_d),size(T_d,1),size(T_d,2),lbound(T_d,1),lbound(T_d,2),r,ny,nx)
 #else
     !$cuf kernel do(2) <<<*,*>>>
     do j=1,nx
@@ -276,16 +385,18 @@ module mod_heat
 #endif
 
     ! Ghost update
-    !call swap() 
+    call swap() 
    end do
 
   end subroutine 
 
 end module
 
+
+
 program heat
- use run
  use mod_heat
+ use run
  use mod_setup
 
  implicit none
