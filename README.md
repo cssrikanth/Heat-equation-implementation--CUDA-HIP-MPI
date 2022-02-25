@@ -1,4 +1,4 @@
-# CUDA-Python-Fortran-Heat-equation
+# 2D Heat Equation
 Simple 2D Heat equation implementation using different programming methods. Below are instructions for fortran compilation.
 
 # General Instructions
