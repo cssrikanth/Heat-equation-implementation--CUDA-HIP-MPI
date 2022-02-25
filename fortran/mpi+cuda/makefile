@@ -7,4 +7,4 @@ mpicuda-a:
 out:
 	python3 out.py
 clean:
-	rm heat soln* *.mod *.eps
+	rm -rf heat soln* *.mod *.eps

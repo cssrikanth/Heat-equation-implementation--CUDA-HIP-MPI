@@ -1,3 +1,0 @@
-translator.FORTRAN_2_C_TYPE_MAP["real"]["dp"]    = "double"
-translator.FORTRAN_TYPE_2_BYTES_MAP["real"]["dp"]    = "8"
-

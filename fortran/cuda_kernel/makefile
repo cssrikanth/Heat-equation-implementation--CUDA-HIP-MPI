@@ -7,4 +7,4 @@ init:
 out:
 	python3 out.py
 clean:
-	rm heat int.dat soln.dat *.mod
+	rm -rf heat int.dat soln.dat *.mod

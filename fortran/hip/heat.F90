@@ -1,11 +1,7 @@
 module run
 
-#ifdef __GPUFORT
  use hipfort
  use hipfort_check
-#else
- use cudafor
-#endif
  use mpi
 
  implicit none
@@ -13,21 +9,14 @@ module run
  integer, parameter :: doubtype = selected_real_kind(15,307)  ! double precision
  
  integer, parameter :: mykind = doubtype
+ integer, parameter :: c_mykind = C_DOUBLE
  integer, parameter :: mpi_prec = mpi_real8
-#ifdef __GPUFORT
  real(mykind), pointer, dimension(:,:) :: T_d,T_old_d
-#else
- real(mykind), allocatable, dimension(:,:) :: T_d,T_old_d
-#endif
  
  real(mykind), allocatable, dimension(:,:) :: T
  real(mykind), allocatable, dimension(:,:) :: t_1s,t_2s,t_1r,t_2r
 
-#ifdef __GPUFORT
  real(mykind), pointer, dimension(:,:) :: td_1s,td_2s,td_1r,td_2r
-#else
- real(mykind), allocatable, dimension(:,:) :: td_1s,td_2s,td_1r,td_2r
-#endif
 
  real(mykind), allocatable, dimension(:)   :: x,y
  real(mykind), allocatable, dimension(:)   :: xg
@@ -55,11 +44,62 @@ module run
  integer :: ny
  integer, parameter :: ng=1   ! Number of ghost nodes
  logical :: masterproc
+ 
+ interface
+  subroutine launch(td1,td2,rr,ng,ny,nx) bind(c)
+   import :: c_ptr, c_mykind
+   implicit none
 
-#ifndef __GPUFORT
- attributes(device) :: T_d, T_old_d
- attributes(device) :: td_1s,td_2s,td_1r,td_2r
-#endif
+   type(c_ptr),value :: td1
+   type(c_ptr),value :: td2
+
+   real(c_mykind),value :: rr
+   integer,value :: ng
+   integer,value :: ny
+   integer,value :: nx
+  end subroutine
+  
+  subroutine launchs(td,tds1,tds2,ng,ny,nx) bind(c)
+   import :: c_ptr
+   
+   implicit none
+
+   type(c_ptr),value :: td
+   type(c_ptr),value :: tds1
+   type(c_ptr),value :: tds2
+
+   integer,value :: nx
+   integer,value :: ny
+   integer,value :: ng
+  end subroutine
+  
+  subroutine launchr1(td,tdr,ng,ny,nx) bind(c)
+   import :: c_ptr
+   
+   implicit none
+
+   type(c_ptr),value :: td
+   type(c_ptr),value :: tdr
+
+   integer,value :: ny
+   integer,value :: ng
+   integer,value :: nx
+  end subroutine
+  
+  subroutine launchr2(td,tdr,ng,ny,nx) bind(c)
+   import :: c_ptr
+   
+   implicit none
+
+   type(c_ptr),value :: td
+   type(c_ptr),value :: tdr
+
+   integer,value :: nx
+   integer,value :: ny
+   integer,value :: ng
+  end subroutine
+ 
+ end interface
 
 end module
 
@@ -80,11 +120,7 @@ module mod_setup
    call mpi_comm_split_type(mpi_comm_world,mpi_comm_type_shared,0,mpi_info_null,local_comm,iermpi)
    call mpi_comm_rank(local_comm,mydev,iermpi)
 
-#ifdef __GPUFORT
-   iermpi = hipSetDevice(mydev)
-#else
-   iermpi = cudaSetDevice(mydev)
-#endif
+   call hipCheck(hipSetDevice(mydev))
 
    write(*,*) "MPI rank",nrank,"using GPU",mydev
 
@@ -124,21 +160,12 @@ module mod_setup
 ! Allocate variables
  
 ! Device variables
-#ifdef __GPUFORT
    call hipCheck(hipMalloc(T_d, (nx + ng) - ((1 - ng)) + 1, (ny + ng) - ((1 - ng)) + 1))
    call hipCheck(hipMalloc(T_old_d, (nx + ng) - ((1 - ng)) + 1, (ny + ng) - ((1 - ng)) + 1))
    call hipCheck(hipMalloc(td_1s, ng, ny))
    call hipCheck(hipMalloc(td_2s, ng, ny))
    call hipCheck(hipMalloc(td_1r, ng, ny))
    call hipCheck(hipMalloc(td_2r, ng, ny))
-#else
-   allocate(T_d(1-ng:nx+ng,1-ng:ny+ng))
-   allocate(T_old_d(1-ng:nx+ng,1-ng:ny+ng))
-   allocate(td_1s(ng,ny))
-   allocate(td_2s(ng,ny))
-   allocate(td_1r(ng,ny))
-   allocate(td_2r(ng,ny))
-#endif
    
 ! Host variables
    allocate(T(1-ng:nx+ng,1-ng:ny+ng))
@@ -172,7 +199,6 @@ module mod_swap
  contains
   subroutine swap()
    use run
-   use mod_heat
    implicit none
    integer :: i,j
    integer :: indx,indy
@@ -181,63 +207,22 @@ module mod_swap
 
    indx = ng*ny
  
-#ifdef __GPUFORT
-    call launchs(0,c_null_ptr,c_loc(T_d),size(T_d,1),size(T_d,2),lbound(t_d,1),lbound(t_d,2),c_loc(td_1s),size(td_1s,1),size(td_1s,2),lbound(td_1s,1),lbound(td_1s,2),c_loc(td_2s),size(td_2s,1),size(td_2s,2),lbound(td_2s,1),lbound(td_2s,2),nx,ny,ng)
-#else
-   !$cuf kernel do(2) <<<grid,tBlock>>>
-   do j=1,ny
-    do i=1,ng
-      td_1s(i,j) = T_d(i,j)
-      td_2s(i,j) = T_d(nx-ng+i,j)
-    end do
-   end do
-   !@cuf iercuda=cudaDeviceSynchronize()
-#endif
-#ifdef __GPUFORT
+    call launchs(c_loc(T_d),c_loc(td_1s),c_loc(td_2s),ng,ny,nx)
     call hipCheck(hipMemcpy(td_1s, t_1s, hipMemcpyDeviceToHost))
     call hipCheck(hipMemcpy(td_2s, t_2s, hipMemcpyDeviceToHost))
-#else
-   t_1s = td_1s
-   t_2s = td_2s
-#endif
 
    call mpi_sendrecv(t_1s,indx,mpi_prec,ileftx ,1,t_2r,indx,mpi_prec,irightx,1,mp_cartx,istatus,iermpi)
    call mpi_sendrecv(t_2s,indx,mpi_prec,irightx,2,t_1r,indx,mpi_prec,ileftx ,2,mp_cartx,istatus,iermpi)
 
-#ifdef __GPUFORT
     call hipCheck(hipMemcpy(t_1r, td_1r, hipMemcpyHostToDevice))
     call hipCheck(hipMemcpy(t_2r, td_2r, hipMemcpyHostToDevice))
-#else
-   td_1r = t_1r
-   td_2r = t_2r
-#endif
 !  
    if (ileftx/=mpi_proc_null) then 
-#ifdef __GPUFORT
-    call launchr1(0,c_null_ptr,c_loc(T_d),size(T_d,1),size(T_d,2),lbound(t_d,1),lbound(t_d,2),c_loc(td_1r),size(td_1r,1),size(td_1r,2),lbound(td_1r,1),lbound(td_1r,2),ny,ng)
-#else
-    !$cuf kernel do(2) <<<grid,tBlock>>>
-    do j=1,ny
-     do i=1,ng
-      T_d(i-ng,j) = td_1r(i,j)
-     end do
-    end do
-    !@cuf iercuda=cudaDeviceSynchronize()
-#endif
+    call launchr1(c_loc(T_d),c_loc(td_1r),ng,ny,nx)
    endif
 
    if (irightx/=mpi_proc_null) then 
-#ifdef __GPUFORT
-    call launchr2(0,c_null_ptr,c_loc(T_d),size(T_d,1),size(T_d,2),lbound(t_d,1),lbound(t_d,2),c_loc(td_2r),size(td_2r,1),size(td_2r,2),lbound(td_2r,1),lbound(td_2r,2),nx,ny,ng)
-#else
-    !$cuf kernel do(2) <<<grid,tBlock>>>
-    do j=1,ny
-     do i=1,ng
-      T_d(nx+i,j) = td_2r(i,j)
-     end do
-    end do
-    !@cuf iercuda=cudaDeviceSynchronize()
-#endif
+    call launchr2(c_loc(T_d),c_loc(td_2r),ng,ny,nx)
    end if
    
   end subroutine
@@ -245,144 +230,19 @@ module mod_swap
 end module
 
 module mod_heat
- interface
-  subroutine launch(shmem,stream,td1,td2,n1,n2,lb1,lb2,rr,nyy,nxx) bind(c)
-   use iso_c_binding
-   use hipfort
-   use hipfort_check
-   use hipfort_types
-   use run
-   
-   implicit none
-
-   integer(c_int),value,intent(in) :: shmem
-   type(c_ptr),value,intent(in) :: stream
-   type(c_ptr),value :: td1
-   integer(c_int),value,intent(in) :: n1
-   integer(c_int),value,intent(in) :: n2
-   integer(c_int),value,intent(in) :: lb1
-   integer(c_int),value,intent(in) :: lb2
-   type(c_ptr),value :: td2
-
-   real(mykind),value :: rr
-   integer,value :: nyy
-   integer,value :: nxx
-  end subroutine
-  
-  subroutine launchs(shmem,stream,td,td_n1,td_n2,td_lb1,td_lb2,tds1,tds1_n1,tds1_n2,tds1_lb1,tds1_lb2,tds2,tds2_n1,tds2_n2,tds2_lb1,tds2_lb2,nxx,nyy,ngg) bind(c)
-   use iso_c_binding
-   use hipfort
-   use hipfort_check
-   use hipfort_types
-   use run
-   
-   implicit none
-
-   integer(c_int),value,intent(in) :: shmem
-   type(c_ptr),value,intent(in) :: stream
-   type(c_ptr),value :: td
-   integer(c_int),value,intent(in) :: td_n1
-   integer(c_int),value,intent(in) :: td_n2
-   integer(c_int),value,intent(in) :: td_lb1
-   integer(c_int),value,intent(in) :: td_lb2
-   type(c_ptr),value :: tds1
-   integer(c_int),value,intent(in) :: tds1_n1
-   integer(c_int),value,intent(in) :: tds1_n2
-   integer(c_int),value,intent(in) :: tds1_lb1
-   integer(c_int),value,intent(in) :: tds1_lb2
-   type(c_ptr),value :: tds2
-   integer(c_int),value,intent(in) :: tds2_n1
-   integer(c_int),value,intent(in) :: tds2_n2
-   integer(c_int),value,intent(in) :: tds2_lb1
-   integer(c_int),value,intent(in) :: tds2_lb2
-
-   integer,value :: nxx
-   integer,value :: nyy
-   integer,value :: ngg
-  end subroutine
-  
-  subroutine launchr1(shmem,stream,td,td_n1,td_n2,td_lb1,td_lb2,tdr,tdr_n1,tdr_n2,tdr_lb1,tdr_lb2,nyy,ngg) bind(c)
-   use iso_c_binding
-   use hipfort
-   use hipfort_check
-   use hipfort_types
-   use run
-   
-   implicit none
-
-   integer(c_int),value,intent(in) :: shmem
-   type(c_ptr),value,intent(in) :: stream
-   type(c_ptr),value :: td
-   integer(c_int),value,intent(in) :: td_n1
-   integer(c_int),value,intent(in) :: td_n2
-   integer(c_int),value,intent(in) :: td_lb1
-   integer(c_int),value,intent(in) :: td_lb2
-   type(c_ptr),value :: tdr
-   integer(c_int),value,intent(in) :: tdr_n1
-   integer(c_int),value,intent(in) :: tdr_n2
-   integer(c_int),value,intent(in) :: tdr_lb1
-   integer(c_int),value,intent(in) :: tdr_lb2
-
-   integer,value :: nyy
-   integer,value :: ngg
-  end subroutine
-  
-  subroutine launchr2(shmem,stream,td,td_n1,td_n2,td_lb1,td_lb2,tdr,tdr_n1,tdr_n2,tdr_lb1,tdr_lb2,nxx,nyy,ngg) bind(c)
-   use iso_c_binding
-   use hipfort
-   use hipfort_check
-   use hipfort_types
-   use run
-   
-   implicit none
-
-   integer(c_int),value,intent(in) :: shmem
-   type(c_ptr),value,intent(in) :: stream
-   type(c_ptr),value :: td
-   integer(c_int),value,intent(in) :: td_n1
-   integer(c_int),value,intent(in) :: td_n2
-   integer(c_int),value,intent(in) :: td_lb1
-   integer(c_int),value,intent(in) :: td_lb2
-   type(c_ptr),value :: tdr
-   integer(c_int),value,intent(in) :: tdr_n1
-   integer(c_int),value,intent(in) :: tdr_n2
-   integer(c_int),value,intent(in) :: tdr_lb1
-   integer(c_int),value,intent(in) :: tdr_lb2
-
-   integer,value :: nxx
-   integer,value :: nyy
-   integer,value :: ngg
-  end subroutine
- 
- end interface
  contains
   subroutine heat_eqn()
    use run
    use mod_swap
    implicit none
    integer    :: i,j,k
-   type(dim3) :: grid, tBlock
    ! Time loop
    do i=1,ntime
     if(masterproc)write(*,*)"time_it:", i
    
-#ifdef __GPUFORT
     call hipCheck(hipMemcpy(T_old_d, T_d, hipMemcpyDeviceToDevice))
-#else
-    T_old_d = T_d
-#endif
  
-#ifdef __GPUFORT
-    call launch(0,c_null_ptr,c_loc(T_d),c_loc(T_old_d),size(T_d,1),size(T_d,2),lbound(T_d,1),lbound(T_d,2),r,ny,nx)
-#else
-    !$cuf kernel do(2) <<<*,*>>>
-    do j=1,nx
-     do k=1,ny
-       T_d(j,k) = T_old_d(j,k) + r*(T_old_d(j+1,k)+T_old_d(j,k+1)+T_old_d(j-1,k)+T_old_d(j,k-1)-4*T_old_d(j,k))
-     end do
-    end do
-    !@cuf iercuda=cudaDeviceSynchronize()
-#endif
+    call launch(c_loc(T_d),c_loc(T_old_d),r,ng,ny,nx)
 
     ! Ghost update
     call swap() 
@@ -391,8 +251,6 @@ module mod_heat
   end subroutine 
 
 end module
-
-
 
 program heat
  use mod_heat
@@ -422,20 +280,12 @@ program heat
  call cpu_time(start)
 
  ! Host to device
-#ifdef __GPUFORT
  call hipCheck(hipMemcpy(T_d, T, hipMemcpyHostToDevice))
-#else
- T_d = T
-#endif
 
  call heat_eqn()
 
  ! Back to host
-#ifdef __GPUFORT
  call hipCheck(hipMemcpy(T, T_d, hipMemcpyDeviceToHost))
-#else
- T = T_d
-#endif
   
  call MPI_BARRIER(mpi_comm_world,iermpi) 
  call cpu_time(finish)
@@ -467,17 +317,12 @@ program heat
  if(masterproc)print*,"simulation completed!!!!"
  if(masterproc)print*,"total time:", finish - start
 
-#ifdef __GPUFORT
  call hipCheck(hipFree(T_d))
  call hipCheck(hipFree(T_old_d))
  call hipCheck(hipFree(td_1s))
  call hipCheck(hipFree(td_2s))
  call hipCheck(hipFree(td_1r))
  call hipCheck(hipFree(td_2r))
-#else
- deallocate(T_d,T_old_d)
- deallocate(td_1s,td_2s,td_1r,td_2r)
-#endif
  
  deallocate(T)
  deallocate(t_1s,t_2s,t_1r,t_2r)
