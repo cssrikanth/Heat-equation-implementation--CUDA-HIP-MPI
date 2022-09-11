@@ -8,18 +8,18 @@ module run
 
  integer, parameter :: doubtype = selected_real_kind(15,307)  ! double precision
  
- integer, parameter :: dp = doubtype
+ integer, parameter :: rkind = doubtype
  integer, parameter :: mpi_prec = mpi_real8
 
- real(dp), allocatable, dimension(:,:) :: T_d,T_old_d
- real(dp), allocatable, dimension(:,:) :: T
- real(dp), allocatable, dimension(:,:) :: t_1s,t_2s,t_1r,t_2r
- real(dp), allocatable, dimension(:,:) :: td_1s,td_2s,td_1r,td_2r
- real(dp), allocatable, dimension(:)   :: x,y
- real(dp), allocatable, dimension(:)   :: xg
+ real(rkind), allocatable, dimension(:,:) :: T_d,T_old_d
+ real(rkind), allocatable, dimension(:,:) :: T
+ real(rkind), allocatable, dimension(:,:) :: t_1s,t_2s,t_1r,t_2r
+ real(rkind), allocatable, dimension(:,:) :: td_1s,td_2s,td_1r,td_2r
+ real(rkind), allocatable, dimension(:)   :: x,y
+ real(rkind), allocatable, dimension(:)   :: xg
  
  integer    :: n, ntime
- real(dp)   :: dom_len, delta, dt, nu, r, sigma
+ real(rkind)   :: dom_len, delta, dt, nu, r, sigma
  ! If solution file needs to be printed
  integer :: soln
  integer    :: iercuda
@@ -126,6 +126,8 @@ module mod_setup
 
    dt = (sigma * delta**2)/nu
 
+   r = (nu*dt)/delta**2
+
    do i=1-ng,n+ng
     xg(i) = (i-1)*delta
    enddo
@@ -228,40 +230,36 @@ program heat
  implicit none
 
  integer ::  i, j, k, z
- real(dp) :: start, finish,lsum,gsum
+ real(rkind) :: lsum,gsum
  character(len=8) :: fmt,x1
+ real(rkind) :: timing(1:2)
 
  call setup()
 
 ! Setting initial and boundary conditions
- T = 2.0_dp
+ T = 2.0_rkind
  if (ileftx==mpi_proc_null) then
-   T(1-ng,:) = 1.0_dp
+   T(1-ng,:) = 1.0_rkind
  end if
  if (irightx==mpi_proc_null) then
-   T(nx+ng,:) = 1.0_dp
+   T(nx+ng,:) = 1.0_rkind
  end if
- T(:,1-ng) = 1.0_dp
- T(:,ny+ng) = 1.0_dp
+ T(:,1-ng) = 1.0_rkind
+ T(:,ny+ng) = 1.0_rkind
 
-! cfl 
- r = (nu*dt)/delta**2
+ timing(1) = MPI_Wtime()
 
- call MPI_BARRIER(mpi_comm_world,iermpi) 
- call cpu_time(start)
-!
  ! Host to device
  T_d = T
 
  call heat_eqn()
-!
+ 
  ! Back to host
  T = T_d
-  
- call MPI_BARRIER(mpi_comm_world,iermpi) 
- call cpu_time(finish)
-
- lsum = 0.0_dp
+ 
+ timing(2) = MPI_Wtime() 
+ 
+ lsum = 0.0_rkind
  do i=1,nx
   do j=1,ny
    lsum = lsum + T(i,j)
@@ -286,7 +284,7 @@ program heat
          
 !
  if(masterproc)print*,"simulation completed!!!!"
- if(masterproc)print*,"total time:", finish - start
+ if(masterproc)print*,"total time:", (timing(2)-timing(1))/ntime
 
  deallocate(x,y)
  deallocate(T,T_d,T_old_d)

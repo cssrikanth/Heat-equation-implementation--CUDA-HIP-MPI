@@ -8,22 +8,22 @@ module run
 
  integer, parameter :: doubtype = selected_real_kind(15,307)  ! double precision
  
- integer, parameter :: mykind = doubtype
- integer, parameter :: c_mykind = C_DOUBLE
+ integer, parameter :: rkind = doubtype
+ integer, parameter :: c_rkind = C_DOUBLE
  integer, parameter :: mpi_prec = mpi_real8
- real(mykind), pointer, dimension(:,:) :: T_d,T_old_d
+ real(rkind), pointer, dimension(:,:) :: T_d,T_old_d
  
- real(mykind), allocatable, dimension(:,:) :: T
- real(mykind), allocatable, dimension(:,:) :: t_1s,t_2s,t_1r,t_2r
+ real(rkind), allocatable, dimension(:,:) :: T
+ real(rkind), allocatable, dimension(:,:) :: t_1s,t_2s,t_1r,t_2r
 
- real(mykind), pointer, dimension(:,:) :: td_1s,td_2s,td_1r,td_2r
+ real(rkind), pointer, dimension(:,:) :: td_1s,td_2s,td_1r,td_2r
 
- real(mykind), allocatable, dimension(:)   :: x,y
- real(mykind), allocatable, dimension(:)   :: xg
+ real(rkind), allocatable, dimension(:)   :: x,y
+ real(rkind), allocatable, dimension(:)   :: xg
  
  integer    :: n, ntime
- real(mykind)   :: dom_len, delta, dt, nu, sigma
- real(mykind) :: r
+ real(rkind)   :: dom_len, delta, dt, nu, sigma
+ real(rkind) :: r
  ! If solution file needs to be printed
  integer :: soln
  integer    :: iercuda
@@ -46,21 +46,21 @@ module run
  logical :: masterproc
  
  interface
-  subroutine launch(td1,td2,rr,ng,ny,nx) bind(c)
-   import :: c_ptr, c_mykind
+  subroutine launch_heat_eqn(td1,td2,rr,ng,ny,nx) bind(c)
+   import :: c_ptr, c_rkind, c_int
    implicit none
 
    type(c_ptr),value :: td1
    type(c_ptr),value :: td2
 
-   real(c_mykind),value :: rr
-   integer,value :: ng
-   integer,value :: ny
-   integer,value :: nx
+   real(c_rkind),value :: rr
+   integer(c_int),value :: ng
+   integer(c_int),value :: ny
+   integer(c_int),value :: nx
   end subroutine
   
-  subroutine launchs(td,tds1,tds2,ng,ny,nx) bind(c)
-   import :: c_ptr
+  subroutine launch_send(td,tds1,tds2,ng,ny,nx) bind(c)
+   import :: c_ptr,c_int
    
    implicit none
 
@@ -68,35 +68,35 @@ module run
    type(c_ptr),value :: tds1
    type(c_ptr),value :: tds2
 
-   integer,value :: nx
-   integer,value :: ny
-   integer,value :: ng
+   integer(c_int),value :: nx
+   integer(c_int),value :: ny
+   integer(c_int),value :: ng
   end subroutine
   
-  subroutine launchr1(td,tdr,ng,ny,nx) bind(c)
-   import :: c_ptr
+  subroutine launch_recv1(td,tdr,ng,ny,nx) bind(c)
+   import :: c_ptr,c_int
    
    implicit none
 
    type(c_ptr),value :: td
    type(c_ptr),value :: tdr
 
-   integer,value :: ny
-   integer,value :: ng
-   integer,value :: nx
+   integer(c_int),value :: ny
+   integer(c_int),value :: ng
+   integer(c_int),value :: nx
   end subroutine
   
-  subroutine launchr2(td,tdr,ng,ny,nx) bind(c)
-   import :: c_ptr
+  subroutine launch_recv2(td,tdr,ng,ny,nx) bind(c)
+   import :: c_ptr,c_int
    
    implicit none
 
    type(c_ptr),value :: td
    type(c_ptr),value :: tdr
 
-   integer,value :: nx
-   integer,value :: ny
-   integer,value :: ng
+   integer(c_int),value :: nx
+   integer(c_int),value :: ny
+   integer(c_int),value :: ng
   end subroutine
  
  end interface
@@ -157,8 +157,6 @@ module mod_setup
    call mpi_comm_rank(mp_cartx,nrank_x,iermpi)
    call mpi_cart_shift(mp_cartx,0,1,ileftx,irightx,iermpi)
 
-! Allocate variables
- 
 ! Device variables
    call hipCheck(hipMalloc(T_d, (nx + ng) - ((1 - ng)) + 1, (ny + ng) - ((1 - ng)) + 1))
    call hipCheck(hipMalloc(T_old_d, (nx + ng) - ((1 - ng)) + 1, (ny + ng) - ((1 - ng)) + 1))
@@ -202,27 +200,25 @@ module mod_swap
    implicit none
    integer :: i,j
    integer :: indx,indy
-   type(dim3) :: grid, tBlock
-
 
    indx = ng*ny
  
-    call launchs(c_loc(T_d),c_loc(td_1s),c_loc(td_2s),ng,ny,nx)
-    call hipCheck(hipMemcpy(td_1s, t_1s, hipMemcpyDeviceToHost))
-    call hipCheck(hipMemcpy(td_2s, t_2s, hipMemcpyDeviceToHost))
+   call launch_send(c_loc(T_d),c_loc(td_1s),c_loc(td_2s),ng,ny,nx)
+   call hipCheck(hipMemcpy(t_1s, td_1s, hipMemcpyDeviceToHost))
+   call hipCheck(hipMemcpy(t_2s, td_2s, hipMemcpyDeviceToHost))
 
    call mpi_sendrecv(t_1s,indx,mpi_prec,ileftx ,1,t_2r,indx,mpi_prec,irightx,1,mp_cartx,istatus,iermpi)
    call mpi_sendrecv(t_2s,indx,mpi_prec,irightx,2,t_1r,indx,mpi_prec,ileftx ,2,mp_cartx,istatus,iermpi)
 
-    call hipCheck(hipMemcpy(t_1r, td_1r, hipMemcpyHostToDevice))
-    call hipCheck(hipMemcpy(t_2r, td_2r, hipMemcpyHostToDevice))
+   call hipCheck(hipMemcpy(td_1r, t_1r, hipMemcpyHostToDevice))
+   call hipCheck(hipMemcpy(td_2r, t_2r, hipMemcpyHostToDevice))
 !  
    if (ileftx/=mpi_proc_null) then 
-    call launchr1(c_loc(T_d),c_loc(td_1r),ng,ny,nx)
+    call launch_recv1(c_loc(T_d),c_loc(td_1r),ng,ny,nx)
    endif
 
    if (irightx/=mpi_proc_null) then 
-    call launchr2(c_loc(T_d),c_loc(td_2r),ng,ny,nx)
+    call launch_recv2(c_loc(T_d),c_loc(td_2r),ng,ny,nx)
    end if
    
   end subroutine
@@ -242,7 +238,7 @@ module mod_heat
    
     call hipCheck(hipMemcpy(T_old_d, T_d, hipMemcpyDeviceToDevice))
  
-    call launch(c_loc(T_d),c_loc(T_old_d),r,ng,ny,nx)
+    call launch_heat_eqn(c_loc(T_d),c_loc(T_old_d),r,ng,ny,nx)
 
     ! Ghost update
     call swap() 
@@ -260,24 +256,24 @@ program heat
  implicit none
 
  integer ::  i, j, k, z
- real :: start, finish,lsum,gsum
+ real(rkind) :: lsum,gsum
  character(len=8) :: fmt,x1
+ real(rkind) :: timing(1:2)
 
  call setup()
 
 ! Setting initial and boundary conditions
- T = 2.0
+ T = 2.0_rkind
  if (ileftx==mpi_proc_null) then
-   T(1-ng,:) = 1.0
+   T(1-ng,:) = 1.0_rkind
  end if
  if (irightx==mpi_proc_null) then
-   T(nx+ng,:) = 1.0
+   T(nx+ng,:) = 1.0_rkind
  end if
- T(:,1-ng) = 1.0
- T(:,ny+ng) = 1.0
+ T(:,1-ng) = 1.0_rkind
+ T(:,ny+ng) = 1.0_rkind
 
- call MPI_BARRIER(mpi_comm_world,iermpi) 
- call cpu_time(start)
+ timing(1) = MPI_Wtime()
 
  ! Host to device
  call hipCheck(hipMemcpy(T_d, T, hipMemcpyHostToDevice))
@@ -287,10 +283,9 @@ program heat
  ! Back to host
  call hipCheck(hipMemcpy(T, T_d, hipMemcpyDeviceToHost))
   
- call MPI_BARRIER(mpi_comm_world,iermpi) 
- call cpu_time(finish)
+ timing(2) = MPI_Wtime()
 
- lsum = 0.0
+ lsum = 0.0_rkind
  do i=1,nx
   do j=1,ny
    lsum = lsum + T(i,j)
@@ -315,7 +310,7 @@ program heat
          
 !
  if(masterproc)print*,"simulation completed!!!!"
- if(masterproc)print*,"total time:", finish - start
+ if(masterproc)print*,"Average time:", (timing(2)-timing(1))/ntime
 
  call hipCheck(hipFree(T_d))
  call hipCheck(hipFree(T_old_d))
