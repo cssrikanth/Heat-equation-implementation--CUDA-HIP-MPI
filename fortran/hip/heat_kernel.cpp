@@ -29,121 +29,122 @@ template <typename I, typename E, typename S> __device__ __forceinline__ bool lo
 #define idx_s(i,j) (((i)-1)+ng*((j)-1))
 
 __global__ void  heat_eqn(
- real *t_d,
- real *t_old_d,                                                                    
+ real *Td,
+ real *Td_old,                                                                    
  real r,                                                                                         
- int ng,                                                                                          
+ int nx,                                                                                          
  int ny,                                                                                          
- int nx) {     
- int j = __GIDX(x,1-ng);
- int k = __GIDX(y,1-ng);
+ int ng) {     
+ 
+ int j = __GIDX(y,1);
+ int k = __GIDX(x,1);
 
- if (loop_cond(j,ny+ng,1) && loop_cond(k,nx+ng,1)){ 
-	 t_d[idx(j,k)]=(t_old_d[idx(j,k)]+r*(t_old_d[idx((j+1),k)]+t_old_d[idx(j,(k+1))]+t_old_d[idx((j-1),k)]+t_old_d[idx(j,(k-1))]-4*t_old_d[idx(j,k)]));
+ if (loop_cond(j,nx,1) && loop_cond(k,ny,1)){ 
+	 Td[idx(j,k)]=(Td_old[idx(j,k)]+r*(Td_old[idx((j+1),k)]+Td_old[idx(j,(k+1))]+Td_old[idx((j-1),k)]+Td_old[idx(j,(k-1))]-4*Td_old[idx(j,k)]));
  }
 }
 
  
 extern "C" void launch_heat_eqn(
- real *t_d,
- real *t_old_d,
+ real *Td,
+ real *Td_old,
  real r,
- int ng,
+ int nx,
  int ny,
- int nx) {
+ int ng) {
 
  dim3 block(TWO_X,TWO_Y);
- dim3 grid(divideAndRoundUp(ny+ng-(1-ng)+1,block.x),divideAndRoundUp(nx+ng-(1-ng)+1,block.y));
+ dim3 grid(divideAndRoundUp(ny,block.x),divideAndRoundUp(nx,block.y));
 
- hipLaunchKernelGGL((heat_eqn),grid,block,0,0,t_d,t_old_d,r,ng,ny,nx);
+ hipLaunchKernelGGL((heat_eqn),grid,block,0,0,Td,Td_old,r,nx,ny,ng);
 
 }
 
 __global__ void  swap_recv1(
- real *t_d,
- real *tdr,
- int ng,                                                                                          
+ real *Td,
+ real *Tdr,
+ int nx,                                                                                          
  int ny,                                                                                          
- int nx) {     
+ int ng) {     
  
- int j = __GIDX(x,1);
- int k = __GIDX(y,1);
+ int i = __GIDX(x,1);
+ int j = __GIDX(y,1);
  
- if (loop_cond(j,ng,1) && loop_cond(k,ny,1)){ 
-	 t_d[idx(j-ng,k)]=tdr[idx_s(j,k)];
+ if (loop_cond(i,ng,1) && loop_cond(j,ny,1)){ 
+	 Td[idx(i-ng,j)]=Tdr[idx_s(i,j)];
  }
 }
 
 extern "C" void launch_recv1(
- real *t_d,
- real *tdr,
- int ng,
+ real *Td,
+ real *Tdr,
+ int nx,
  int ny,
- int nx) {
+ int ng) {
 
  dim3 block(TWO_X,TWO_Y);
  dim3 grid(divideAndRoundUp(ng,block.x),divideAndRoundUp(ny,block.y));
  
- hipLaunchKernelGGL((swap_recv1), grid, block, 0,0, t_d,tdr,ng,ny,nx);
+ hipLaunchKernelGGL((swap_recv1), grid, block, 0,0, Td,Tdr,nx,ny,ng);
 
 }
 
 __global__ void  swap_recv2(
- real *t_d,
- real *tdr,
- int ng,                                                                                          
+ real *Td,
+ real *Tdr,
+ int nx,                                                                                          
  int ny,                                                                                          
- int nx) {     
- int j = __GIDX(x,1);
- int k = __GIDX(y,1);
+ int ng) {     
+ int i = __GIDX(x,1);
+ int j = __GIDX(y,1);
  
- if (loop_cond(j,ng,1) && loop_cond(k,ny,1)){ 
-	 t_d[idx(nx+j,k)]=tdr[idx_s(j,k)];
+ if (loop_cond(i,ng,1) && loop_cond(j,ny,1)){ 
+	 Td[idx(nx+i,j)]=Tdr[idx_s(i,j)];
  }
 }
 
 extern "C" void launch_recv2(
- real *t_d,
- real *tdr,
- int ng,
+ real *Td,
+ real *Tdr,
+ int nx,
  int ny,
- int nx) {
+ int ng) {
  
  dim3 block(TWO_X,TWO_Y);
  dim3 grid(divideAndRoundUp(ng,block.x),divideAndRoundUp(ny,block.y));
 
- hipLaunchKernelGGL((swap_recv2),grid,block,0,0,t_d,tdr,ng,ny,nx);
+ hipLaunchKernelGGL((swap_recv2),grid,block,0,0,Td,Tdr,nx,ny,ng);
 
 }
 
 __global__ void  swap_send(
- real *t_d,
- real *tds1,
- real *tds2,
- int ng,                                                                                          
+ real *Td,
+ real *Tds1,
+ real *Tds2,
+ int nx,                                                                                          
  int ny,
- int nx) {     
+ int ng) {     
  
- int j = __GIDX(x,1);
- int k = __GIDX(y,1);
+ int i = __GIDX(x,1);
+ int j = __GIDX(y,1);
  
- if (loop_cond(j,ng,1) && loop_cond(k,ny,1)){ 
-	 tds1[idx_s(j,k)]=t_d[idx(j,k)];
- 	 tds2[idx_s(j,k)]=t_d[idx(nx-ng+j,k)];
+ if (loop_cond(i,ng,1) && loop_cond(j,ny,1)){ 
+	 Tds1[idx_s(i,j)]=Td[idx(i,j)];
+ 	 Tds2[idx_s(i,j)]=Td[idx(nx-ng+i,j)];
  }
 }
 
 extern "C" void launch_send(
- real *t_d,
- real *tds1,
- real *tds2,
- int ng,
+ real *Td,
+ real *Tds1,
+ real *Tds2,
+ int nx,
  int ny,
- int nx) {
+ int ng) {
  
  dim3 block(TWO_X,TWO_Y);
  dim3 grid(divideAndRoundUp(ng,block.x),divideAndRoundUp(ny,block.y));
 
- hipLaunchKernelGGL((swap_send),grid,block,0,0,t_d,tds1,tds2,ng,ny,nx);
+ hipLaunchKernelGGL((swap_send),grid,block,0,0,Td,Tds1,Tds2,nx,ny,ng);
 
 }
