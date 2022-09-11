@@ -11,12 +11,12 @@ module run
  integer, parameter :: rkind = doubtype
  integer, parameter :: c_rkind = C_DOUBLE
  integer, parameter :: mpi_prec = mpi_real8
- real(rkind), pointer, dimension(:,:) :: T_d,T_old_d
+ real(rkind), pointer, dimension(:,:) :: Td,Td_old
  
  real(rkind), allocatable, dimension(:,:) :: T
- real(rkind), allocatable, dimension(:,:) :: t_1s,t_2s,t_1r,t_2r
+ real(rkind), allocatable, dimension(:,:) :: T1s,T2s,T1r,T2r
 
- real(rkind), pointer, dimension(:,:) :: td_1s,td_2s,td_1r,td_2r
+ real(rkind), pointer, dimension(:,:) :: Td1s,Td2s,Td1r,Td2r
 
  real(rkind), allocatable, dimension(:)   :: x,y
  real(rkind), allocatable, dimension(:)   :: xg
@@ -46,53 +46,53 @@ module run
  logical :: masterproc
  
  interface
-  subroutine launch_heat_eqn(td1,td2,rr,ng,ny,nx) bind(c)
+  subroutine launch_heat_eqn(Td,Td_old,r,nx,ny,ng) bind(c)
    import :: c_ptr, c_rkind, c_int
    implicit none
 
-   type(c_ptr),value :: td1
-   type(c_ptr),value :: td2
+   type(c_ptr),value :: Td
+   type(c_ptr),value :: Td_old
 
-   real(c_rkind),value :: rr
-   integer(c_int),value :: ng
-   integer(c_int),value :: ny
-   integer(c_int),value :: nx
-  end subroutine
-  
-  subroutine launch_send(td,tds1,tds2,ng,ny,nx) bind(c)
-   import :: c_ptr,c_int
-   
-   implicit none
-
-   type(c_ptr),value :: td
-   type(c_ptr),value :: tds1
-   type(c_ptr),value :: tds2
-
+   real(c_rkind),value :: r
    integer(c_int),value :: nx
    integer(c_int),value :: ny
    integer(c_int),value :: ng
   end subroutine
   
-  subroutine launch_recv1(td,tdr,ng,ny,nx) bind(c)
+  subroutine launch_send(Td,Tds1,Tds2,nx,ny,ng) bind(c)
    import :: c_ptr,c_int
    
    implicit none
 
-   type(c_ptr),value :: td
-   type(c_ptr),value :: tdr
+   type(c_ptr),value :: Td
+   type(c_ptr),value :: Tds1
+   type(c_ptr),value :: Tds2
 
+   integer(c_int),value :: nx
    integer(c_int),value :: ny
    integer(c_int),value :: ng
-   integer(c_int),value :: nx
   end subroutine
   
-  subroutine launch_recv2(td,tdr,ng,ny,nx) bind(c)
+  subroutine launch_recv1(Td,tdr,nx,ny,ng) bind(c)
    import :: c_ptr,c_int
    
    implicit none
 
-   type(c_ptr),value :: td
-   type(c_ptr),value :: tdr
+   type(c_ptr),value :: Td
+   type(c_ptr),value :: Tdr
+
+   integer(c_int),value :: nx
+   integer(c_int),value :: ny
+   integer(c_int),value :: ng
+  end subroutine
+  
+  subroutine launch_recv2(Td,Tdr,nx,ny,ng) bind(c)
+   import :: c_ptr,c_int
+   
+   implicit none
+
+   type(c_ptr),value :: Td
+   type(c_ptr),value :: Tdr
 
    integer(c_int),value :: nx
    integer(c_int),value :: ny
@@ -158,21 +158,21 @@ module mod_setup
    call mpi_cart_shift(mp_cartx,0,1,ileftx,irightx,iermpi)
 
 ! Device variables
-   call hipCheck(hipMalloc(T_d, (nx + ng) - ((1 - ng)) + 1, (ny + ng) - ((1 - ng)) + 1))
-   call hipCheck(hipMalloc(T_old_d, (nx + ng) - ((1 - ng)) + 1, (ny + ng) - ((1 - ng)) + 1))
-   call hipCheck(hipMalloc(td_1s, ng, ny))
-   call hipCheck(hipMalloc(td_2s, ng, ny))
-   call hipCheck(hipMalloc(td_1r, ng, ny))
-   call hipCheck(hipMalloc(td_2r, ng, ny))
+   call hipCheck(hipMalloc(Td, (nx + ng) - ((1 - ng)) + 1, (ny + ng) - ((1 - ng)) + 1))
+   call hipCheck(hipMalloc(Td_old, (nx + ng) - ((1 - ng)) + 1, (ny + ng) - ((1 - ng)) + 1))
+   call hipCheck(hipMalloc(td1s, ng, ny))
+   call hipCheck(hipMalloc(td2s, ng, ny))
+   call hipCheck(hipMalloc(td1r, ng, ny))
+   call hipCheck(hipMalloc(td2r, ng, ny))
    
 ! Host variables
    allocate(T(1-ng:nx+ng,1-ng:ny+ng))
    allocate(x(1-ng:nx+ng))
    allocate(y(1-ng:ny+ng))
-   allocate(t_1s(ng,ny))
-   allocate(t_2s(ng,ny))
-   allocate(t_1r(ng,ny))
-   allocate(t_2r(ng,ny))
+   allocate(t1s(ng,ny))
+   allocate(t2s(ng,ny))
+   allocate(t1r(ng,ny))
+   allocate(t2r(ng,ny))
    allocate(xg(1-ng:n+ng))
 
    delta = dom_len/real(n-1)
@@ -203,22 +203,26 @@ module mod_swap
 
    indx = ng*ny
  
-   call launch_send(c_loc(T_d),c_loc(td_1s),c_loc(td_2s),ng,ny,nx)
-   call hipCheck(hipMemcpy(t_1s, td_1s, hipMemcpyDeviceToHost))
-   call hipCheck(hipMemcpy(t_2s, td_2s, hipMemcpyDeviceToHost))
+   call launch_send(c_loc(Td),c_loc(Td1s),c_loc(Td2s),nx,ny,ng)
+   call hipCheck(hipDeviceSynchronize())
+   
+   call hipCheck(hipMemcpy(T1s, Td1s, hipMemcpyDeviceToHost))
+   call hipCheck(hipMemcpy(T2s, Td2s, hipMemcpyDeviceToHost))
 
-   call mpi_sendrecv(t_1s,indx,mpi_prec,ileftx ,1,t_2r,indx,mpi_prec,irightx,1,mp_cartx,istatus,iermpi)
-   call mpi_sendrecv(t_2s,indx,mpi_prec,irightx,2,t_1r,indx,mpi_prec,ileftx ,2,mp_cartx,istatus,iermpi)
+   call mpi_sendrecv(T1s,indx,mpi_prec,ileftx,1,T2r,indx,mpi_prec,irightx,1,mp_cartx,istatus,iermpi)
+   call mpi_sendrecv(T2s,indx,mpi_prec,irightx,2,T1r,indx,mpi_prec,ileftx,2,mp_cartx,istatus,iermpi)
 
-   call hipCheck(hipMemcpy(td_1r, t_1r, hipMemcpyHostToDevice))
-   call hipCheck(hipMemcpy(td_2r, t_2r, hipMemcpyHostToDevice))
+   call hipCheck(hipMemcpy(Td1r, T1r, hipMemcpyHostToDevice))
+   call hipCheck(hipMemcpy(Td2r, T2r, hipMemcpyHostToDevice))
 !  
    if (ileftx/=mpi_proc_null) then 
-    call launch_recv1(c_loc(T_d),c_loc(td_1r),ng,ny,nx)
+    call launch_recv1(c_loc(Td),c_loc(Td1r),nx,ny,ng)
+    call hipCheck(hipDeviceSynchronize())
    endif
 
    if (irightx/=mpi_proc_null) then 
-    call launch_recv2(c_loc(T_d),c_loc(td_2r),ng,ny,nx)
+    call launch_recv2(c_loc(Td),c_loc(Td2r),nx,ny,ng)
+    call hipCheck(hipDeviceSynchronize())
    end if
    
   end subroutine
@@ -236,9 +240,10 @@ module mod_heat
    do i=1,ntime
     if(masterproc)write(*,*)"time_it:", i
    
-    call hipCheck(hipMemcpy(T_old_d, T_d, hipMemcpyDeviceToDevice))
+    call hipCheck(hipMemcpy(Td_old, Td, hipMemcpyDeviceToDevice))
  
-    call launch_heat_eqn(c_loc(T_d),c_loc(T_old_d),r,ng,ny,nx)
+    call launch_heat_eqn(c_loc(Td),c_loc(Td_old),r,nx,ny,ng)
+    call hipCheck(hipDeviceSynchronize())
 
     ! Ghost update
     call swap() 
@@ -276,12 +281,12 @@ program heat
  timing(1) = MPI_Wtime()
 
  ! Host to device
- call hipCheck(hipMemcpy(T_d, T, hipMemcpyHostToDevice))
+ call hipCheck(hipMemcpy(Td, T, hipMemcpyHostToDevice))
 
  call heat_eqn()
 
  ! Back to host
- call hipCheck(hipMemcpy(T, T_d, hipMemcpyDeviceToHost))
+ call hipCheck(hipMemcpy(T, Td, hipMemcpyDeviceToHost))
   
  timing(2) = MPI_Wtime()
 
@@ -312,15 +317,15 @@ program heat
  if(masterproc)print*,"simulation completed!!!!"
  if(masterproc)print*,"Average time:", (timing(2)-timing(1))/ntime
 
- call hipCheck(hipFree(T_d))
- call hipCheck(hipFree(T_old_d))
- call hipCheck(hipFree(td_1s))
- call hipCheck(hipFree(td_2s))
- call hipCheck(hipFree(td_1r))
- call hipCheck(hipFree(td_2r))
+ call hipCheck(hipFree(Td))
+ call hipCheck(hipFree(Td_old))
+ call hipCheck(hipFree(Td1s))
+ call hipCheck(hipFree(Td2s))
+ call hipCheck(hipFree(Td1r))
+ call hipCheck(hipFree(Td2r))
  
  deallocate(T)
- deallocate(t_1s,t_2s,t_1r,t_2r)
+ deallocate(T1s,T2s,T1r,T2r)
  deallocate(x,y)
  deallocate(xg)
  deallocate(ncoords,nblocks,pbc)
