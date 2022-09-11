@@ -11,10 +11,10 @@ module run
  integer, parameter :: rkind = doubtype
  integer, parameter :: mpi_prec = mpi_real8
 
- real(rkind), allocatable, dimension(:,:) :: T_d,T_old_d
+ real(rkind), allocatable, dimension(:,:) :: Td,Td_old
  real(rkind), allocatable, dimension(:,:) :: T
- real(rkind), allocatable, dimension(:,:) :: t_1s,t_2s,t_1r,t_2r
- real(rkind), allocatable, dimension(:,:) :: td_1s,td_2s,td_1r,td_2r
+ real(rkind), allocatable, dimension(:,:) :: T1s, T2s, T1r, T2r
+ real(rkind), allocatable, dimension(:,:) :: Td1s,Td2s,Td1r,Td2r
  real(rkind), allocatable, dimension(:)   :: x,y
  real(rkind), allocatable, dimension(:)   :: xg
  
@@ -42,8 +42,8 @@ module run
  logical :: masterproc
 
 #ifdef USE_CUDA
- attributes(device) :: T_d, T_old_d
- attributes(device) :: td_1s,td_2s,td_1r,td_2r
+ attributes(device) :: Td, Td_old
+ attributes(device) :: Td1s,Td2s,Td1r,Td2r
 #endif
 
 end module
@@ -107,18 +107,18 @@ module mod_setup
    allocate(T(1-ng:nx+ng,1-ng:ny+ng))
    allocate(x(1-ng:nx+ng))
    allocate(y(1-ng:ny+ng))
-   allocate(T_d(1-ng:nx+ng,1-ng:ny+ng))
-   allocate(T_old_d(1-ng:nx+ng,1-ng:ny+ng))
+   allocate(Td(1-ng:nx+ng,1-ng:ny+ng))
+   allocate(Td_old(1-ng:nx+ng,1-ng:ny+ng))
    
-   allocate(t_1s(ng,ny))
-   allocate(t_2s(ng,ny))
-   allocate(t_1r(ng,ny))
-   allocate(t_2r(ng,ny))
+   allocate(T1s(ng,ny))
+   allocate(T2s(ng,ny))
+   allocate(T1r(ng,ny))
+   allocate(T2r(ng,ny))
    !
-   allocate(td_1s(ng,ny))
-   allocate(td_2s(ng,ny))
-   allocate(td_1r(ng,ny))
-   allocate(td_2r(ng,ny))
+   allocate(Td1s(ng,ny))
+   allocate(Td2s(ng,ny))
+   allocate(Td1r(ng,ny))
+   allocate(Td2r(ng,ny))
    !
    allocate(xg(1-ng:n+ng))
 
@@ -153,29 +153,29 @@ module mod_swap
    !$cuf kernel do(2) <<<*,*>>>
    do j=1,ny
     do i=1,ng
-      td_1s(i,j) = T_d(i,j)
-      td_2s(i,j) = T_d(nx-ng+i,j)
+      Td1s(i,j) = Td(i,j)
+      Td2s(i,j) = Td(nx-ng+i,j)
     end do
    end do
    !@cuf iercuda=cudaDeviceSynchronize()
 
 #if defined(USE_CUDA) && defined(NO_AWARE)
-   t_1s = td_1s
-   t_2s = td_2s
-   call mpi_sendrecv(t_1s,indx,mpi_prec,ileftx ,1,t_2r,indx,mpi_prec,irightx,1,mp_cartx,istatus,iermpi)
-   call mpi_sendrecv(t_2s,indx,mpi_prec,irightx,2,t_1r,indx,mpi_prec,ileftx ,2,mp_cartx,istatus,iermpi)
-   td_1r = t_1r
-   td_2r = t_2r
+   T1s = Td1s
+   T2s = Td2s
+   call mpi_sendrecv(T1s,indx,mpi_prec,ileftx,1,T2r,indx,mpi_prec,irightx,1,mp_cartx,istatus,iermpi)
+   call mpi_sendrecv(T2s,indx,mpi_prec,irightx,2,T1r,indx,mpi_prec,ileftx ,2,mp_cartx,istatus,iermpi)
+   Td1r = T1r
+   Td2r = T2r
 #else
-   call mpi_sendrecv(td_1s,indx,mpi_prec,ileftx ,1,td_2r,indx,mpi_prec,irightx,1,mp_cartx,istatus,iermpi)
-   call mpi_sendrecv(td_2s,indx,mpi_prec,irightx,2,td_1r,indx,mpi_prec,ileftx ,2,mp_cartx,istatus,iermpi)
+   call mpi_sendrecv(Td1s,indx,mpi_prec,ileftx,1,Td2r,indx,mpi_prec,irightx,1,mp_cartx,istatus,iermpi)
+   call mpi_sendrecv(Td2s,indx,mpi_prec,irightx,2,Td1r,indx,mpi_prec,ileftx ,2,mp_cartx,istatus,iermpi)
 #endif
   
    if (ileftx/=mpi_proc_null) then 
     !$cuf kernel do(2) <<<*,*>>>
     do j=1,ny
      do i=1,ng
-      T_d(i-ng,j) = td_1r(i,j)
+      Td(i-ng,j) = Td1r(i,j)
      end do
     end do
     !@cuf iercuda=cudaDeviceSynchronize()
@@ -184,7 +184,7 @@ module mod_swap
     !$cuf kernel do(2) <<<*,*>>>
     do j=1,ny
      do i=1,ng
-      T_d(nx+i,j) = td_2r(i,j)
+      Td(nx+i,j) = Td2r(i,j)
      end do
     end do
     !@cuf iercuda=cudaDeviceSynchronize()
@@ -205,11 +205,11 @@ module mod_heat
    ! Time loop
    do i=1,ntime
     if(masterproc)write(*,*)"time_it:", i
-    T_old_d = T_d
+    Td_old = Td
     !$cuf kernel do(2) <<<*,*>>>
     do j=1,nx
      do k=1,ny
-       T_d(j,k) = T_old_d(j,k) + r*(T_old_d(j+1,k)+T_old_d(j,k+1)+T_old_d(j-1,k)+T_old_d(j,k-1)-4*T_old_d(j,k))
+       Td(j,k) = Td_old(j,k) + r*(Td_old(j+1,k)+Td_old(j,k+1)+Td_old(j-1,k)+Td_old(j,k-1)-4*Td_old(j,k))
      end do
     end do
     !@cuf iercuda=cudaDeviceSynchronize()
@@ -250,12 +250,12 @@ program heat
  timing(1) = MPI_Wtime()
 
  ! Host to device
- T_d = T
+ Td = T
 
  call heat_eqn()
  
  ! Back to host
- T = T_d
+ T = Td
  
  timing(2) = MPI_Wtime() 
  
@@ -287,9 +287,9 @@ program heat
  if(masterproc)print*,"total time:", (timing(2)-timing(1))/ntime
 
  deallocate(x,y)
- deallocate(T,T_d,T_old_d)
- deallocate(t_1s,t_2s,t_1r,t_2r)
- deallocate(td_1s,td_2s,td_1r,td_2r)
+ deallocate(T,Td,Td_old)
+ deallocate(T1s,T2s,T1r,T2r)
+ deallocate(Td1s,Td2s,Td1r,Td2r)
  deallocate(xg)
  deallocate(ncoords,nblocks,pbc)
 
