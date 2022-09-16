@@ -36,8 +36,8 @@ __global__ void  heat_eqn(
  int ny,                                                                                          
  int ng) {     
  
- int j = __GIDX(y,1);
- int k = __GIDX(x,1);
+ int j = __GIDX(x,1);
+ int k = __GIDX(y,1);
 
  if (loop_cond(j,nx,1) && loop_cond(k,ny,1)){ 
 	 Td[idx(j,k)]=(Td_old[idx(j,k)]+r*(Td_old[idx((j+1),k)]+Td_old[idx(j,(k+1))]+Td_old[idx((j-1),k)]+Td_old[idx(j,(k-1))]-4*Td_old[idx(j,k)]));
@@ -54,7 +54,7 @@ extern "C" void launch_heat_eqn(
  int ng) {
 
  dim3 block(TWO_X,TWO_Y);
- dim3 grid(divideAndRoundUp(ny,block.x),divideAndRoundUp(nx,block.y));
+ dim3 grid(divideAndRoundUp(nx,block.x),divideAndRoundUp(ny,block.y));
 
  hipLaunchKernelGGL((heat_eqn),grid,block,0,0,Td,Td_old,r,nx,ny,ng);
 

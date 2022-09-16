@@ -236,6 +236,9 @@ program heat
 
  call setup()
 
+ if(masterproc) print*, "nx: ", nx
+ if(masterproc) print*, "ny: ", ny
+
 ! Setting initial and boundary conditions
  T = 2.0_rkind
  if (ileftx==mpi_proc_null) then
@@ -247,7 +250,7 @@ program heat
  T(:,1-ng) = 1.0_rkind
  T(:,ny+ng) = 1.0_rkind
 
- timing(1) = MPI_Wtime()
+ call MPI_BARRIER(MPI_COMM_WORLD, iermpi) ; timing(1) = MPI_Wtime()
 
  ! Host to device
  Td = T
@@ -256,16 +259,18 @@ program heat
  
  ! Back to host
  T = Td
+ iercuda = cudaDeviceSynchronize()
  
- timing(2) = MPI_Wtime() 
- 
- lsum = 0.0_rkind
- do i=1,nx
-  do j=1,ny
-   lsum = lsum + T(i,j)
-  enddo
- enddo
- call MPI_Reduce(lsum, gsum, 1, MPI_DOUBLE, MPI_SUM, 0, mpi_comm_world, iermpi) 
+ call MPI_BARRIER(MPI_COMM_WORLD, iermpi) ; timing(2) = MPI_Wtime()
+
+ !Debug 
+ !lsum = 0.0_rkind
+ !do i=1,nx
+ ! do j=1,ny
+ !  lsum = lsum + T(i,j)
+ ! enddo
+ !enddo
+ !call MPI_Reduce(lsum, gsum, 1, MPI_DOUBLE, MPI_SUM, 0, mpi_comm_world, iermpi) 
 
  if(masterproc)print*,"Sum of Temperature:",gsum
 
