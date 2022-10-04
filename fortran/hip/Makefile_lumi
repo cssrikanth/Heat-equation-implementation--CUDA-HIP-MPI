@@ -2,8 +2,9 @@
 
 HIP_COMPILER = gcc
 HIPFORT_COMPILER = ftn
-HIPFC = ftn
-HIPCC = hipcc -fPIC
+HIPFC = /users/srcs/hipfort/INSTALL2/bin/hipfc -hipfort-compiler ftn --offload-arch=gfx90a
+#HIPFC = ftn
+HIPCC = hipcc -fPIC --offload-arch=gfx90a
 FC = $(HIPFC)
 CC = $(HIPCC)
 INCLUDE   = -I$(MPICH_DIR)/include -I/users/srcs/hipfort/INSTALL2/include/amdgcn/
